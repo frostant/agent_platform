@@ -642,7 +642,6 @@ class ReportGenerator:
         """在指定容器 block 内创建 Grid 并排插入多张图片"""
         col_count = len(image_paths)
         try:
-            # 创建 Grid（type=24）在容器内
             grid_block = {"block_type": 24, "grid": {"column_size": col_count}}
             result = doc.append_blocks(parent_block_id, [grid_block])
             if result.get("code") != 0:
@@ -652,12 +651,14 @@ class ReportGenerator:
             grid_data = result["data"]["children"][0]
             column_ids = grid_data.get("children", [])
 
-            # 每列插入一张图片
             for col_idx, img_path in enumerate(image_paths):
                 if col_idx >= len(column_ids):
                     break
                 col_id = column_ids[col_idx]
-                self._insert_image_in_block(doc, col_id, img_path)
+                # 用 write_table_cell_image 替代 _insert_image_in_block
+                # 它会处理默认空段落的清理
+                doc.write_table_cell_image(col_id, img_path)
+                time.sleep(0.5)
         except Exception as e:
             print(f"    ⚠ Grid 插入失败: {e}")
 
