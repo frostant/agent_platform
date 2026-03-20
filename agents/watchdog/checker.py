@@ -147,11 +147,12 @@ def notify_feishu(message: str):
         logger.warning(f"飞书通知失败: {e}")
 
 
-def run_check(mode: str = "lite") -> dict:
+def run_check(mode: str = "lite", trigger: str = "manual") -> dict:
     """执行一轮完整检查
 
     Args:
         mode: "lite" 或 "live"
+        trigger: "scheduled"（定时）/ "boot"（开机）/ "manual"（手动）
 
     Returns:
         检查结果 dict，同时持久化到 health_log.json
@@ -218,6 +219,7 @@ def run_check(mode: str = "lite") -> dict:
     check_result = {
         "timestamp": timestamp,
         "mode": mode,
+        "trigger": trigger,
         "all_ok": all_ok,
         "agents_checked": len(results),
         "agents": results,
@@ -270,6 +272,54 @@ def _save_log(result: dict):
         logs = logs[-200:]
 
     HEALTH_LOG.write_text(json.dumps(logs, indent=2, ensure_ascii=False, default=str))
+
+
+def get_daily_summary(days: int = 30) -> dict:
+    """按天汇总定时检查结果（排除手动触发）
+
+    Returns:
+        {
+            "agents": ["feishu_notify", "daily_digest", ...],
+            "days": [
+                {"date": "2026-03-21", "agents": {"feishu_notify": true, ...}},
+                ...
+            ]
+        }
+    """
+    logs = get_health_logs(limit=500)
+    # 只取定时触发的
+    scheduled = [l for l in logs if l.get("trigger") == "scheduled"]
+
+    # 收集所有 agent id
+    all_agents = set()
+    for log in scheduled:
+        for a in log.get("agents", []):
+            all_agents.add(a["agent_id"])
+
+    # 按天分组
+    from collections import defaultdict
+    daily = defaultdict(lambda: defaultdict(list))  # date -> agent_id -> [bool]
+    for log in scheduled:
+        date = log["timestamp"][:10]
+        for a in log.get("agents", []):
+            daily[date][a["agent_id"]].append(a.get("ok", False))
+
+    # 汇总：一天内全部通过=True，有一次失败=False
+    from datetime import datetime, timedelta
+    today = datetime.now().date()
+    result_days = []
+    for i in range(days - 1, -1, -1):
+        d = (today - timedelta(days=i)).isoformat()
+        day_result = {"date": d, "agents": {}}
+        for aid in sorted(all_agents):
+            checks = daily.get(d, {}).get(aid, [])
+            if not checks:
+                day_result["agents"][aid] = None  # 无数据
+            else:
+                day_result["agents"][aid] = all(checks)
+        result_days.append(day_result)
+
+    return {"agents": sorted(all_agents), "days": result_days}
 
 
 def get_health_logs(limit: int = 50) -> list:

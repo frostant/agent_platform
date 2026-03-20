@@ -26,7 +26,7 @@ from fastapi.responses import HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-from checker import run_check, get_health_logs
+from checker import run_check, get_health_logs, get_daily_summary
 
 # ---------------------------------------------------------------------------
 # 日志
@@ -61,7 +61,7 @@ def _start_scheduler():
 
     # 工作日 9:30 → full 检查
     scheduler.add_job(
-        lambda: run_check("live"),
+        lambda: run_check("live", trigger="scheduled"),
         CronTrigger(day_of_week="mon-fri", hour=9, minute=30),
         id="weekday_morning",
         name="工作日晨检(full)",
@@ -69,7 +69,7 @@ def _start_scheduler():
 
     # 工作日 22:00 → lite 检查
     scheduler.add_job(
-        lambda: run_check("lite"),
+        lambda: run_check("lite", trigger="scheduled"),
         CronTrigger(day_of_week="mon-fri", hour=22, minute=0),
         id="weekday_evening",
         name="工作日晚检(lite)",
@@ -77,7 +77,7 @@ def _start_scheduler():
 
     # 周末 10:00 → lite 检查
     scheduler.add_job(
-        lambda: run_check("lite"),
+        lambda: run_check("lite", trigger="scheduled"),
         CronTrigger(day_of_week="sat,sun", hour=10, minute=0),
         id="weekend_morning",
         name="周末晨检(lite)",
@@ -92,7 +92,7 @@ def _start_scheduler():
     def boot_check():
         time.sleep(30)
         logger.info("开机首检(lite)...")
-        run_check("lite")
+        run_check("lite", trigger="boot")
 
     threading.Thread(target=boot_check, daemon=True).start()
 
@@ -153,6 +153,12 @@ def manual_check(req: CheckRequest):
 @app.get("/logs")
 def logs(limit: int = 50):
     return get_health_logs(limit)
+
+
+@app.get("/daily")
+def daily(days: int = 30):
+    """30 天每日健康汇总（只统计定时检查）"""
+    return get_daily_summary(days)
 
 
 @app.get("/status")
@@ -259,6 +265,16 @@ h1{font-size:20px;font-weight:600;margin-bottom:16px}
 <div class="status-bar" id="status"></div>
 
 <div class="card">
+  <div class="card-title">30 天健康趋势（定时检查）</div>
+  <div id="heatmap"><div style="color:#bbbfc4">加载中...</div></div>
+  <div style="display:flex;gap:12px;margin-top:8px;font-size:11px;color:#bbbfc4">
+    <span><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:#1a7f1a;vertical-align:middle"></span> 全部通过</span>
+    <span><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:#d83931;vertical-align:middle"></span> 有检查失败</span>
+    <span><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:#e5e6eb;vertical-align:middle"></span> 无数据</span>
+  </div>
+</div>
+
+<div class="card">
   <div class="card-title">检查历史</div>
   <div id="logs"><div style="color:#bbbfc4">加载中...</div></div>
 </div>
@@ -323,8 +339,60 @@ async function runCheck(mode) {
   btn.disabled = false;
 }
 
+async function loadHeatmap() {
+  try {
+    const res = await fetch(API + '/daily?days=30');
+    const data = await res.json();
+    const el = document.getElementById('heatmap');
+
+    if (!data.agents || !data.agents.length) {
+      el.innerHTML = '<div style="color:#bbbfc4">暂无定时检查数据</div>';
+      return;
+    }
+
+    let html = '<div style="overflow-x:auto">';
+
+    // 日期行
+    html += '<div style="display:flex;align-items:center;margin-bottom:2px">';
+    html += '<div style="width:120px;flex-shrink:0"></div>';
+    data.days.forEach((d, i) => {
+      if (i % 5 === 0) {
+        html += '<div style="width:14px;flex-shrink:0;font-size:9px;color:#bbbfc4;text-align:center" title="' + d.date + '">' + d.date.slice(8) + '</div>';
+      } else {
+        html += '<div style="width:14px;flex-shrink:0"></div>';
+      }
+    });
+    html += '</div>';
+
+    // 每个 Agent 一行
+    data.agents.forEach(aid => {
+      html += '<div style="display:flex;align-items:center;margin-bottom:2px">';
+      html += '<div style="width:120px;flex-shrink:0;font-size:12px;color:#646a73;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + aid + '">' + aid + '</div>';
+
+      let ok_count = 0, total_count = 0;
+      data.days.forEach(d => {
+        const v = d.agents[aid];
+        let color = '#e5e6eb'; // 无数据
+        let title = d.date + ': 无数据';
+        if (v === true) { color = '#1a7f1a'; title = d.date + ': 正常'; ok_count++; total_count++; }
+        else if (v === false) { color = '#d83931'; title = d.date + ': 异常'; total_count++; }
+        html += '<div style="width:12px;height:12px;border-radius:2px;background:' + color + ';margin:0 1px;cursor:pointer" title="' + title + '"></div>';
+      });
+
+      // 可用率
+      const rate = total_count > 0 ? Math.round(ok_count / total_count * 100) : '-';
+      html += '<div style="width:50px;flex-shrink:0;font-size:11px;color:#646a73;text-align:right;margin-left:4px">' + rate + '%</div>';
+      html += '</div>';
+    });
+
+    html += '</div>';
+    el.innerHTML = html;
+  } catch(e) { console.error(e); }
+}
+
 loadStatus();
 loadLogs();
+loadHeatmap();
 setInterval(loadStatus, 30000);
 </script>
 </body>
