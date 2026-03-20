@@ -375,6 +375,18 @@ def generate(req: GenerateRequest):
         raise HTTPException(500, f"报告生成失败: {e}")
 
 
+@app.get("/progress")
+def progress(dir_name: str = ""):
+    """查询截图进度：返回指定目录下的 png 文件数量"""
+    if not dir_name:
+        return {"current": 0, "total": 21}
+    target = OUTPUT_DIR / dir_name
+    if not target.exists():
+        return {"current": 0, "total": 21, "dir": dir_name}
+    pngs = list(target.glob("*.png"))
+    return {"current": len(pngs), "total": 21, "dir": dir_name}
+
+
 @app.get("/outputs")
 def list_outputs():
     """列出所有输出目录"""
@@ -534,15 +546,47 @@ async function runScreenshot() {
   const body = getParams();
   if (!body.flight_id) { showStatus('请输入 Flight ID', 'error'); return; }
   showStatus('正在截图，可能需要数分钟...', 'info');
-  document.getElementById('results').innerHTML = '<div class="loading"><div class="spinner"></div><p style="margin-top:8px">Playwright 截图中...</p></div>';
+
+  // 计算输出目录名（和后端 _make_output_dir 一致）
+  const dirName = [body.flight_id, body.version||'default', body.datacenter||'ALL', body.start_date||'', body.end_date||''].filter(Boolean).join('_');
+
+  // 进度条 UI
+  document.getElementById('results').innerHTML =
+    '<div class="card">' +
+    '<div class="card-title">截图进度</div>' +
+    '<div style="background:#f0f1f5;border-radius:6px;height:24px;overflow:hidden;margin-bottom:8px">' +
+    '<div id="progress-bar" style="background:#4e83fd;height:100%;width:0%;transition:width 0.5s;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:12px;color:#fff;min-width:40px"></div>' +
+    '</div>' +
+    '<div id="progress-text" style="font-size:13px;color:#646a73;text-align:center">准备中...</div>' +
+    '</div>';
+
+  // 轮询进度
+  let pollTimer = setInterval(async () => {
+    try {
+      const r = await fetch(API + '/progress?dir_name=' + encodeURIComponent(dirName));
+      const p = await r.json();
+      const pct = Math.round(p.current / p.total * 100);
+      document.getElementById('progress-bar').style.width = pct + '%';
+      document.getElementById('progress-bar').textContent = p.current + '/' + p.total;
+      document.getElementById('progress-text').textContent = '已完成 ' + p.current + ' / ' + p.total + ' 张截图';
+    } catch(e) {}
+  }, 3000);
+
   try {
     const res = await fetch(API + '/screenshot', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    clearInterval(pollTimer);
     if (!res.ok) { const e = await res.json(); throw new Error(e.detail||'失败'); }
     const data = await res.json();
-    showStatus('截图完成: ' + data.screenshots + ' 张截图', 'success');
-    document.getElementById('results').innerHTML = '<div class="card"><div class="card-title">截图结果</div><div style="font-size:13px">' + data.groups + ' 个指标组, ' + data.screenshots + ' 张截图<br>输出: ' + data.output + '</div></div>';
+
+    // 完成状态
+    document.getElementById('progress-bar').style.width = '100%';
+    document.getElementById('progress-bar').textContent = data.screenshots + '/' + data.screenshots;
+    document.getElementById('progress-bar').style.background = '#1a7f1a';
+    document.getElementById('progress-text').textContent = '截图完成: ' + data.screenshots + ' 张';
+    showStatus('截图完成: ' + data.screenshots + ' 张', 'success');
     loadOutputs();
   } catch(e) {
+    clearInterval(pollTimer);
     showStatus('截图失败: ' + e.message, 'error');
     document.getElementById('results').innerHTML = '';
   }
@@ -553,9 +597,27 @@ async function runGenerate() {
   if (!body.flight_id) { showStatus('请输入 Flight ID', 'error'); return; }
   body.test_mode = true;
   showStatus('正在生成报告（截图→爬取→飞书文档），可能需要数分钟...', 'info');
-  document.getElementById('results').innerHTML = '<div class="loading"><div class="spinner"></div><p style="margin-top:8px">端到端生成中...</p></div>';
+
+  const dirName2 = [body.flight_id, body.version||'default', body.datacenter||'ALL', body.start_date||'', body.end_date||''].filter(Boolean).join('_');
+  document.getElementById('results').innerHTML =
+    '<div class="card"><div class="card-title">生成进度</div>' +
+    '<div style="background:#f0f1f5;border-radius:6px;height:24px;overflow:hidden;margin-bottom:8px">' +
+    '<div id="gen-bar" style="background:#4e83fd;height:100%;width:0%;transition:width 0.5s;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:12px;color:#fff;min-width:40px"></div></div>' +
+    '<div id="gen-text" style="font-size:13px;color:#646a73;text-align:center">准备中...</div></div>';
+
+  let genPoll = setInterval(async () => {
+    try {
+      const r = await fetch(API + '/progress?dir_name=' + encodeURIComponent(dirName2));
+      const p = await r.json();
+      const pct = Math.round(p.current / p.total * 100);
+      document.getElementById('gen-bar').style.width = pct + '%';
+      document.getElementById('gen-bar').textContent = p.current + '/' + p.total;
+      document.getElementById('gen-text').textContent = 'Step 1 截图: ' + p.current + '/' + p.total + ' 张';
+    } catch(e) {}
+  }, 3000);
   try {
     const res = await fetch(API + '/generate', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    clearInterval(genPoll);
     if (!res.ok) { const e = await res.json(); throw new Error(e.detail||'失败'); }
     const data = await res.json();
     let html = '<div class="card"><div class="card-title">报告生成完成</div>';
@@ -565,6 +627,7 @@ async function runGenerate() {
     document.getElementById('results').innerHTML = html;
     loadOutputs();
   } catch(e) {
+    clearInterval(genPoll);
     showStatus('报告生成失败: ' + e.message, 'error');
     document.getElementById('results').innerHTML = '';
   }
