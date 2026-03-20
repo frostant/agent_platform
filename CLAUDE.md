@@ -72,6 +72,14 @@
 - 正负方向必须看 `rel_diff` 的符号
 - 颜色规则：显著 + rel_diff≥0 → 绿色，显著 + rel_diff<0 → 红色，不显著 → 黑色
 
+### 飞书文档表格/Grid 空行问题
+- **根因**：飞书创建表格或 Grid 后，每个 cell/column 自带一个空文本段落 block
+- **不能直接删再写**：cell 不能完全为空，飞书会自动补回空段落
+- **正确方案**：先写入内容，再删除多余的默认段落
+  - `table_pair`：`write_table_cell_image` 用 index=0 插图片，然后删 index=1 之后
+  - `primary_grid` 容器：追加所有内容后删 index=0 到 _default_count
+  - Grid 列：用 `write_table_cell_image`（已含清理逻辑）
+
 ### 日志
 - 网关日志：`logs/gateway.log`
 - Agent 日志：`agents/<id>/data/<id>.log`
