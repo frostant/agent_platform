@@ -1,0 +1,12 @@
+{
+  "id": "watchdog",
+  "name": "心跳守护",
+  "description": "定时检查所有 Agent 健康状态，异常自动通知 + 修复",
+  "icon": "activity",
+  "type": "fastapi",
+  "port": 8510,
+  "entry": "app",
+  "access": "root_only",
+  "autostart": true,
+  "tags": ["监控", "健康检查", "守护"]
+}

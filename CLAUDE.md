@@ -114,7 +114,7 @@ python3 test_e2e.py [--port PORT] --live   # + 全量测试（分钟级，发布
 - [x] ~~Git 首次提交~~
 - [x] ~~Render 部署配置~~：https://agent-platform-apsf.onrender.com/
 - [ ] 推特爬虫 + 工具 Agent
-- [ ] 心跳守护 Agent（Watchdog）：横向管理所有 Agent，定时健康检查 + 通知 + 授权后自动修复
+- [x] ~~心跳守护 Agent（Watchdog）~~：已实现：横向管理所有 Agent，定时健康检查 + 通知 + 授权后自动修复
 - [ ] 账号管理 + Agent 可见性控制（对外展示时实现）
 - [ ] Nginx 配置模板
 - [x] ~~Libra 实验报告 Agent~~：已接入，截图/爬取/飞书生成三步都可用
@@ -124,10 +124,15 @@ python3 test_e2e.py [--port PORT] --live   # + 全量测试（分钟级，发布
 ## 规划中的功能
 
 ### 心跳守护 Agent（Watchdog）
-- 每小时检查所有 Agent 的 /health + test_e2e.py
-- 异常 → 飞书通知 → 授权后 git stash → 修复 → 失败则回滚
-- 默认跨沙箱只读，修复需 root 明确授权
-- 开机自启（launchd/systemd）
+- **定时策略**：
+  - 工作日 9:30：full 检查（test_e2e --live），开机后首次也触发
+  - 工作日 22:00：lite 检查（test_e2e --lite）
+  - 周末 10:00：lite 检查
+- **检查内容**：/health 存活 + test_e2e.py 功能验证
+- **异常处理**：飞书通知 → 自动重启 → 验证恢复 → 失败则通知手动处理
+- **健康记录**：每次检查结果持久化，追踪可用性和健康趋势
+- **权限**：默认跨沙箱只读，git 回滚需 root 授权
+- **开机自启**：launchd/systemd
 
 ### 多 Agent 并行对比（Arena）
 - 同一 prompt 并行发给多个大模型 API，结果并排展示
