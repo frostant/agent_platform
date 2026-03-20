@@ -484,6 +484,7 @@ class ReportGenerator:
         try:
             table_block_id, cells = doc.create_empty_table(1, 1)
             cell_id = cells[0]
+            self._clear_cell_default_blocks(doc, cell_id)
         except Exception as e:
             print(f"    ⚠ 创建容器表格失败，回退垂直: {e}")
             self._layout_vertical(doc, group)
@@ -577,6 +578,27 @@ class ReportGenerator:
                 text_color=FeishuDoc.color_name_to_int("gray"),
             )
 
+    def _clear_cell_default_blocks(self, doc, cell_id):
+        """清除表格 cell 内的默认空 block（消除多余回车）"""
+        try:
+            cell_detail = doc.get_block(cell_id)
+            children = cell_detail.get("data", {}).get("block", {}).get("children", [])
+            if children:
+                url = (
+                    f"{doc.api_base}/docx/v1/documents/{doc.document_id}"
+                    f"/blocks/{cell_id}/children/batch_delete"
+                    f"?document_revision_id=-1"
+                )
+                import requests as _req
+                _req.delete(
+                    url,
+                    json={"start_index": 0, "end_index": len(children)},
+                    headers=doc._headers(),
+                    timeout=10,
+                )
+        except Exception:
+            pass  # 忽略清理失败
+
     def _insert_pair_as_table(self, doc, left_path, right_path):
         """用 1×2 表格并排插入两张截图"""
         if not left_path and not right_path:
@@ -588,9 +610,12 @@ class ReportGenerator:
             return
         try:
             table_block_id, cells = doc.create_empty_table(1, 2)
-            doc.write_table_cell_image(cells[0], str(left_path))
+            # 清除 cell 默认空 block
+            for cell_id in cells:
+                self._clear_cell_default_blocks(doc, cell_id)
+            self._insert_image_in_block(doc, cells[0], str(left_path))
             time.sleep(0.5)
-            doc.write_table_cell_image(cells[1], str(right_path))
+            self._insert_image_in_block(doc, cells[1], str(right_path))
             time.sleep(0.5)
         except Exception as e:
             print(f"    ⚠ 表格并排失败，回退到垂直: {e}")
