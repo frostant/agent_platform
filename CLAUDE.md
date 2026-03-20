@@ -112,7 +112,7 @@ python3 test_e2e.py [--port PORT] --live   # + 全量测试（分钟级，发布
 ## TODO
 
 - [x] ~~Git 首次提交~~
-- [ ] Render 部署配置
+- [x] ~~Render 部署配置~~：https://agent-platform-apsf.onrender.com/
 - [ ] 推特爬虫 + 工具 Agent
 - [ ] 心跳守护 Agent（Watchdog）：横向管理所有 Agent，定时健康检查 + 通知 + 授权后自动修复
 - [ ] 账号管理 + Agent 可见性控制（对外展示时实现）
