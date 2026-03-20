@@ -55,6 +55,11 @@
 - post 富文本不支持 `style` 字段，发送时必须过滤掉
 - 支持元素：`text`、`a`（链接）、`at`
 
+### 新增 Agent 后本地看不到
+- **根因**：网关只在启动时扫描一次 `agents/*/agent.json`
+- **解决**：登录 root → 管理面板点"重新扫描"，或 `POST /api/agents/reload`，或重启网关
+- Render 每次部署会自动重启，所以云端不受影响
+
 ### Agent 前端修改后不生效
 - **现象**：修改了 `app.py` 中的 HTML/JS，浏览器强刷后仍是旧代码
 - **根因**：uvicorn 没有用 `--reload` 启动，修改 Python 文件后进程仍跑旧代码
@@ -104,7 +109,12 @@ python3 test_e2e.py [--port PORT] --live   # + 全量测试（分钟级，发布
 - [ ] 心跳守护 Agent（Watchdog）：横向管理所有 Agent，定时健康检查 + 通知 + 授权后自动修复
 - [ ] 账号管理 + Agent 可见性控制（对外展示时实现）
 - [ ] Nginx 配置模板
-- [x] ~~Libra 实验报告 Agent~~：已接入，指标爬取可用。截图 + 飞书文档生成待完善
+- [x] ~~Libra 实验报告 Agent~~：已接入，截图/爬取/飞书生成三步都可用
+- [ ] **launch_report 体验优化**（分步实现）：
+  - [ ] 按钮顺序调整：截图 → 爬取指标 → 生成报告
+  - [ ] 输出命名规范：`{flight_id}_{version}_{datacenter}_{start}_{end}`，相同参数覆盖而非新建
+  - [ ] 缓存复用：生成报告前检查截图和数据是否已存在，跳过已有步骤
+  - [ ] 截图进度展示：动态显示已完成 X/21 张（WebSocket 或轮询）
 - [ ] 更多 Agent 接入（小红书文案、Poker、股票告警等）
 
 ## 规划中的功能

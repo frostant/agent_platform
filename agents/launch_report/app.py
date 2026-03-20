@@ -24,12 +24,17 @@ from fastapi.responses import HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-# launch_report 是自包含模块
-sys.path.insert(0, str(Path(__file__).parent / "launch_report"))
+# launch_report 是自包含包，通过包导入
+sys.path.insert(0, str(Path(__file__).parent))
 
-from libra_sdk.client import LibraClient
-from libra_sdk.experiment import ExperimentHelper
-from config import load_metrics3_config, load_settings
+import asyncio
+from launch_report.libra_sdk.client import LibraClient
+from launch_report.libra_sdk.experiment import ExperimentHelper
+from launch_report.libra_sdk.screenshot_parallel import capture_screenshots_parallel
+from launch_report.config import load_metrics3_config, load_settings, get_launch_report_groups
+from launch_report.crawl_metrics import crawl as do_crawl
+from launch_report.report.generator import ReportGenerator
+from launch_report.feishu_sdk import FeishuDoc
 
 # ---------------------------------------------------------------------------
 # 日志
@@ -87,7 +92,11 @@ class CrawlRequest(BaseModel):
 class ScreenshotRequest(BaseModel):
     flight_id: int
     version: Optional[str] = None
+    start_date: Optional[str] = None
+    end_date: Optional[str] = None
+    datacenter: Optional[str] = "ROW"  # ROW/EU/None
     group_ids: Optional[List[int]] = None  # 指定截图的指标组 ID，None=全部
+    max_workers: int = 4
 
 
 class GenerateRequest(BaseModel):
@@ -95,7 +104,9 @@ class GenerateRequest(BaseModel):
     version: Optional[str] = None
     start_date: Optional[str] = None
     end_date: Optional[str] = None
+    datacenter: Optional[str] = "ROW"
     doc_id: Optional[str] = None  # 已有飞书文档 ID，None=新建
+    test_mode: bool = True  # 文档首行加时间戳
 
 
 # ---------------------------------------------------------------------------
@@ -112,95 +123,256 @@ def health():
 
 @app.post("/crawl")
 def crawl(req: CrawlRequest):
-    """爬取指标数据，保存 metrics_data.json"""
+    """爬取指标数据 — 直接复用 crawl_metrics.crawl()"""
     logger.info(f"爬取指标: flight_id={req.flight_id}, version={req.version}")
 
     if not COOKIES_PATH.exists():
         raise HTTPException(500, "cookies.json 不存在")
 
     try:
-        client = LibraClient(COOKIES_PATH)
-        config = load_metrics3_config()
+        # 确定版本名：未指定时取第一个实验组
+        target_version = req.version
+        if not target_version:
+            client = LibraClient(COOKIES_PATH)
+            baseuser_data = client.get_baseuser(req.flight_id)
+            info = ExperimentHelper.identify_base_version(baseuser_data.get('baseuser', []))
+            if not info['exp_versions']:
+                raise HTTPException(400, "无实验组版本")
+            target_version = info['exp_versions'][0][1]
+            logger.info(f"未指定版本，使用第一个实验组: {target_version}")
 
-        # 获取实验信息
-        meta = client.get_conclusion_report_meta(req.flight_id)
-        exp_name = meta.get('experiment_name', f'实验 {req.flight_id}')
-        baseuser_data = client.get_baseuser(req.flight_id)
-        version_info = ExperimentHelper.identify_base_version(baseuser_data.get('baseuser', []))
+        # 输出目录（统一命名）
+        out_dir = _make_output_dir(req.flight_id, target_version, None, req.start_date, req.end_date)
 
-        base_vid = version_info['base_vid']
-        base_vname = version_info['base_vname']
+        # 复用已验证的 crawl 函数
+        result = do_crawl(
+            flight_id=req.flight_id,
+            target_version=target_version,
+            output_dir=out_dir,
+            start_date=req.start_date,
+            end_date=req.end_date,
+            cookies_path=COOKIES_PATH,
+        )
 
-        # 找目标版本
-        target = None
-        for vid, vname, users in version_info['exp_versions']:
-            if req.version and vname == req.version:
-                target = (vid, vname, users)
-                break
-        if not target and version_info['exp_versions']:
-            target = version_info['exp_versions'][0]
-        if not target:
-            raise HTTPException(400, "无实验组版本")
-
-        target_vid, target_vname, target_users = target
-
-        # 日期范围
-        start_date = req.start_date or meta.get('start_date')
-        end_date = req.end_date or meta.get('end_date')
-        if not start_date or not end_date:
-            _, computed = ExperimentHelper.compute_date_range(baseuser_data, meta)
-            start_date = start_date or computed[0]
-            end_date = end_date or computed[1]
-
-        # 爬取每个指标组
-        groups_data = {}
-        for group in config.get('metric_groups', []):
-            gid = group['group_id']
-            try:
-                lean_data = client.get_lean_data(req.flight_id, gid, start_date, end_date, base_vid)
-                metrics = ExperimentHelper.parse_metrics(
-                    lean_data.get('merge_data', {}),
-                    str(base_vid), str(target_vid),
-                )
-                groups_data[str(gid)] = {
-                    'group_name': group['group_name'],
-                    'section': group.get('section', ''),
-                    'metrics': metrics,
-                }
-            except Exception as e:
-                logger.warning(f"指标组 {gid} 爬取失败: {e}")
-                groups_data[str(gid)] = {'group_name': group['group_name'], 'error': str(e)}
-
-        # 保存
-        suffix = f"_{target_vname}" if req.version else "_final"
-        out_dir = OUTPUT_DIR / f"{req.flight_id}{suffix}"
-        out_dir.mkdir(parents=True, exist_ok=True)
-
-        result = {
-            'flight_id': req.flight_id,
-            'experiment_name': exp_name,
-            'base_vid': base_vid,
-            'base_vname': base_vname,
-            'base_users': version_info['base_users'],
-            'target_vid': target_vid,
-            'target_vname': target_vname,
-            'target_users': target_users,
-            'start_date': start_date,
-            'end_date': end_date,
-            'groups': groups_data,
-        }
-
-        data_path = out_dir / 'metrics_data.json'
-        data_path.write_text(json.dumps(result, indent=2, ensure_ascii=False, default=str), encoding='utf-8')
-
-        logger.info(f"指标数据已保存: {data_path}")
-        return {"ok": True, "output": str(out_dir), "data": result}
+        logger.info(f"爬取完成: {out_dir}")
+        return {"ok": True, "output": out_dir, "data": result}
 
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"爬取失败: {e}\n{traceback.format_exc()}")
         raise HTTPException(500, f"爬取失败: {e}")
+
+
+def _make_output_dir(flight_id, version, datacenter=None, start_date=None, end_date=None):
+    """统一命名规范：{flight_id}_{version}_{datacenter}_{start}_{end}
+    相同参数覆盖而非新建"""
+    parts = [str(flight_id)]
+    parts.append(version or "default")
+    parts.append(datacenter or "ALL")
+    if start_date:
+        parts.append(start_date)
+    if end_date:
+        parts.append(end_date)
+    name = "_".join(parts)
+    out = OUTPUT_DIR / name
+    out.mkdir(parents=True, exist_ok=True)
+    return str(out)
+
+
+def _resolve_version_info(flight_id, version_name=None):
+    """获取实验的版本信息，返回 (base_vid, base_vname, target_vid, target_vname, start_date, end_date)"""
+    client = LibraClient(COOKIES_PATH)
+    meta = client.get_conclusion_report_meta(flight_id)
+    baseuser_data = client.get_baseuser(flight_id)
+    info = ExperimentHelper.identify_base_version(baseuser_data.get('baseuser', []))
+
+    if not info['exp_versions']:
+        raise HTTPException(400, "无实验组版本")
+
+    # 找目标版本
+    target = None
+    for vid, vname, users in info['exp_versions']:
+        if version_name and vname == version_name:
+            target = (vid, vname)
+            break
+    if not target:
+        target = (info['exp_versions'][0][0], info['exp_versions'][0][1])
+
+    # 日期
+    start_date, end_date, _ = ExperimentHelper.compute_date_range(baseuser_data, meta)
+
+    return {
+        'base_vid': info['base_vid'],
+        'base_vname': info['base_vname'],
+        'target_vid': target[0],
+        'target_vname': target[1],
+        'start_date': start_date,
+        'end_date': end_date,
+        'exp_name': meta.get('experiment_name', f'实验 {flight_id}'),
+    }
+
+
+@app.post("/screenshot")
+def screenshot(req: ScreenshotRequest):
+    """Step 1: Playwright 截图指标组"""
+    logger.info(f"截图: flight_id={req.flight_id}, version={req.version}, groups={req.group_ids}")
+
+    if not COOKIES_PATH.exists():
+        raise HTTPException(500, "cookies.json 不存在")
+
+    try:
+        vi = _resolve_version_info(req.flight_id, req.version)
+        start_date = req.start_date or vi['start_date']
+        end_date = req.end_date or vi['end_date']
+        target_vname = vi['target_vname']
+
+        # 准备截图组
+        config = load_metrics3_config()
+        groups = get_launch_report_groups(config)
+        # 补充 age_dimension
+        for mg in config['metric_groups']:
+            for g in groups:
+                if g['group_id'] == mg['group_id']:
+                    g['age_dimension'] = mg.get('age_dimension', 'predicted_age_group')
+
+        # 按 group_ids 过滤
+        if req.group_ids:
+            groups = [g for g in groups if g['group_id'] in req.group_ids]
+
+        out_dir = _make_output_dir(req.flight_id, target_vname, req.datacenter, start_date, end_date)
+
+        logger.info(f"截图 {len(groups)} 个指标组 → {out_dir}")
+        logger.info(f"  base_vid={vi['base_vid']}, target_vid={vi['target_vid']}, dates={start_date}~{end_date}")
+
+        results = asyncio.run(capture_screenshots_parallel(
+            flight_id=req.flight_id,
+            groups=groups,
+            output_dir=out_dir,
+            datacenter=req.datacenter,
+            max_workers=req.max_workers,
+            start_date=start_date,
+            end_date=end_date,
+            base_vid=vi['base_vid'],
+            target_vid=vi['target_vid'],
+        ))
+
+        # 统计结果
+        total_screenshots = sum(len(r.get('files', [])) for r in results if isinstance(r, dict))
+        logger.info(f"截图完成: {total_screenshots} 张")
+
+        return {
+            "ok": True,
+            "output": out_dir,
+            "groups": len(groups),
+            "screenshots": total_screenshots,
+            "details": results,
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"截图失败: {e}\n{traceback.format_exc()}")
+        raise HTTPException(500, f"截图失败: {e}")
+
+
+@app.post("/generate")
+def generate(req: GenerateRequest):
+    """完整端到端流程: 截图 → 爬取 → 生成飞书文档"""
+    logger.info(f"生成报告: flight_id={req.flight_id}, version={req.version}, doc_id={req.doc_id}")
+
+    if not COOKIES_PATH.exists():
+        raise HTTPException(500, "cookies.json 不存在")
+
+    try:
+        vi = _resolve_version_info(req.flight_id, req.version)
+        target_vname = vi['target_vname']
+        start_date = req.start_date or vi['start_date']
+        end_date = req.end_date or vi['end_date']
+
+        out_dir = _make_output_dir(req.flight_id, target_vname, req.datacenter, start_date, end_date)
+        out_path = Path(out_dir)
+
+        # 检查缓存：已有截图和数据则跳过
+        existing_screenshots = list(out_path.glob('*.png'))
+        has_metrics = (out_path / 'metrics_data.json').exists()
+
+        # Step 1: 截图（有截图则跳过）
+        if existing_screenshots:
+            logger.info(f"Step 1: 跳过截图（已有 {len(existing_screenshots)} 张）")
+        else:
+            logger.info("Step 1: 截图...")
+            config = load_metrics3_config()
+            groups = get_launch_report_groups(config)
+            for mg in config['metric_groups']:
+                for g in groups:
+                    if g['group_id'] == mg['group_id']:
+                        g['age_dimension'] = mg.get('age_dimension', 'predicted_age_group')
+
+            asyncio.run(capture_screenshots_parallel(
+                flight_id=req.flight_id,
+                groups=groups,
+                output_dir=out_dir,
+                datacenter=req.datacenter,
+                max_workers=4,
+                start_date=start_date,
+                end_date=end_date,
+                base_vid=vi['base_vid'],
+                target_vid=vi['target_vid'],
+            ))
+
+        # Step 2: 爬取数据（有 metrics_data.json 则跳过）
+        if has_metrics:
+            logger.info("Step 2: 跳过爬取（已有 metrics_data.json）")
+        else:
+            logger.info("Step 2: 爬取指标...")
+            do_crawl(
+                flight_id=req.flight_id,
+                target_version=target_vname,
+                output_dir=out_dir,
+                start_date=start_date,
+                end_date=end_date,
+                cookies_path=COOKIES_PATH,
+            )
+
+        # Step 3: 生成飞书文档
+        logger.info("Step 3: 生成飞书文档...")
+        gen = ReportGenerator(
+            flight_id=req.flight_id,
+            target_version=target_vname,
+            screenshots_dir=out_dir,
+        )
+        gen.prepare()
+
+        doc = FeishuDoc(req.doc_id)
+        doc.auth()
+
+        if not req.doc_id:
+            title = f"[Launch Notice] {vi['exp_name']} - {target_vname}"
+            doc.create_document(title)
+
+        gen.render(doc, test_mode=req.test_mode)
+
+        try:
+            doc.set_public_permission("tenant_readable")
+        except Exception as e:
+            logger.warning(f"设置文档权限失败: {e}")
+
+        doc_url = f"https://bytedance.larkoffice.com/docx/{doc.document_id}" if doc.document_id else None
+        logger.info(f"报告生成完成: {doc_url}")
+
+        return {
+            "ok": True,
+            "output": out_dir,
+            "doc_id": doc.document_id,
+            "doc_url": doc_url,
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"报告生成失败: {e}\n{traceback.format_exc()}")
+        raise HTTPException(500, f"报告生成失败: {e}")
 
 
 @app.get("/outputs")
@@ -283,8 +455,18 @@ pre{background:#f5f6f8;padding:12px;border-radius:6px;font-size:12px;line-height
     <label>结束日期</label>
     <input type="text" id="end-date" placeholder="YYYY-MM-DD（可选）" style="width:120px">
   </div>
+  <div class="row">
+    <label>机房</label>
+    <select id="datacenter" style="padding:6px 10px;border:1px solid #e5e6eb;border-radius:6px;font-size:13px">
+      <option value="ROW" selected>ROW</option>
+      <option value="EU">EU</option>
+      <option value="">全部</option>
+    </select>
+  </div>
   <div class="row" style="margin-top:12px;gap:8px">
-    <button class="btn btn-primary" onclick="runCrawl()">爬取指标</button>
+    <button class="btn" style="background:#e8f0fe;color:#1a56db" onclick="runScreenshot()">1. 截图</button>
+    <button class="btn btn-primary" onclick="runCrawl()">2. 爬取指标</button>
+    <button class="btn" style="background:#e8f7e8;color:#1a7f1a" onclick="runGenerate()">3. 生成报告</button>
     <button class="btn btn-secondary" onclick="fillTest()">填入测试数据</button>
   </div>
 </div>
@@ -316,19 +498,11 @@ function showStatus(msg, type) {
 }
 
 async function runCrawl() {
-  const fid = document.getElementById('flight-id').value;
-  if (!fid) { showStatus('请输入 Flight ID', 'error'); return; }
+  const body = getParams();
+  if (!body.flight_id) { showStatus('请输入 Flight ID', 'error'); return; }
   showStatus('正在爬取指标数据...', 'info');
   document.getElementById('results').innerHTML = '<div class="loading"><div class="spinner"></div></div>';
   try {
-    const body = { flight_id: parseInt(fid) };
-    const v = document.getElementById('version').value;
-    const sd = document.getElementById('start-date').value;
-    const ed = document.getElementById('end-date').value;
-    if (v) body.version = v;
-    if (sd) body.start_date = sd;
-    if (ed) body.end_date = ed;
-
     const res = await fetch(API + '/crawl', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
     if (!res.ok) { const e = await res.json(); throw new Error(e.detail||'失败'); }
     const data = await res.json();
@@ -337,6 +511,61 @@ async function runCrawl() {
     loadOutputs();
   } catch(e) {
     showStatus('爬取失败: ' + e.message, 'error');
+    document.getElementById('results').innerHTML = '';
+  }
+}
+
+function getParams() {
+  const body = {};
+  const fid = document.getElementById('flight-id').value;
+  if (fid) body.flight_id = parseInt(fid);
+  const v = document.getElementById('version').value;
+  const sd = document.getElementById('start-date').value;
+  const ed = document.getElementById('end-date').value;
+  const dc = document.getElementById('datacenter').value;
+  if (v) body.version = v;
+  if (sd) body.start_date = sd;
+  if (ed) body.end_date = ed;
+  if (dc) body.datacenter = dc;
+  return body;
+}
+
+async function runScreenshot() {
+  const body = getParams();
+  if (!body.flight_id) { showStatus('请输入 Flight ID', 'error'); return; }
+  showStatus('正在截图，可能需要数分钟...', 'info');
+  document.getElementById('results').innerHTML = '<div class="loading"><div class="spinner"></div><p style="margin-top:8px">Playwright 截图中...</p></div>';
+  try {
+    const res = await fetch(API + '/screenshot', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    if (!res.ok) { const e = await res.json(); throw new Error(e.detail||'失败'); }
+    const data = await res.json();
+    showStatus('截图完成: ' + data.screenshots + ' 张截图', 'success');
+    document.getElementById('results').innerHTML = '<div class="card"><div class="card-title">截图结果</div><div style="font-size:13px">' + data.groups + ' 个指标组, ' + data.screenshots + ' 张截图<br>输出: ' + data.output + '</div></div>';
+    loadOutputs();
+  } catch(e) {
+    showStatus('截图失败: ' + e.message, 'error');
+    document.getElementById('results').innerHTML = '';
+  }
+}
+
+async function runGenerate() {
+  const body = getParams();
+  if (!body.flight_id) { showStatus('请输入 Flight ID', 'error'); return; }
+  body.test_mode = true;
+  showStatus('正在生成报告（截图→爬取→飞书文档），可能需要数分钟...', 'info');
+  document.getElementById('results').innerHTML = '<div class="loading"><div class="spinner"></div><p style="margin-top:8px">端到端生成中...</p></div>';
+  try {
+    const res = await fetch(API + '/generate', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    if (!res.ok) { const e = await res.json(); throw new Error(e.detail||'失败'); }
+    const data = await res.json();
+    let html = '<div class="card"><div class="card-title">报告生成完成</div>';
+    if (data.doc_url) html += '<div style="margin-bottom:8px"><a href="' + data.doc_url + '" target="_blank" style="color:#4e83fd">' + data.doc_url + '</a></div>';
+    html += '<div style="font-size:13px;color:#646a73">输出目录: ' + data.output + '</div></div>';
+    showStatus('报告生成完成', 'success');
+    document.getElementById('results').innerHTML = html;
+    loadOutputs();
+  } catch(e) {
+    showStatus('报告生成失败: ' + e.message, 'error');
     document.getElementById('results').innerHTML = '';
   }
 }
