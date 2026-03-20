@@ -26,6 +26,7 @@
 |-------|------|------|------|
 | feishu_notify | 8501 | public | 飞书群消息推送（纯文本+富文本） |
 | daily_digest | 8502 | root_only | Libra 实验摘要（单实验+全量） |
+| launch_report | 8503 | root_only | 实验报告生成（截图+爬取+飞书文档） |
 
 ## 交互注意
 
@@ -88,10 +89,12 @@ python3 test_e2e.py [--port PORT] --live   # + 全量测试（分钟级，发布
 ```
 
 ### 标准测试样例
-| Agent | 输入 |
-|-------|------|
-| daily_digest 单实验 | flight_id=71879109, start=2026-03-16, end=2026-03-19, region=ROW |
-| feishu_notify | `--send` 模式发送测试消息 |
+| Agent | 模式 | 输入 | 说明 |
+|-------|------|------|------|
+| daily_digest | lite | flight_id=71879109, start=2026-03-16, end=2026-03-19, region=ROW | 单实验数据拉取 |
+| launch_report | lite | flight_id=71879109, 2 个指标组爬取 + 生成文档 | 快速端到端验证 |
+| launch_report | live | flight_id=71879109, 全部指标组截图 + 生成文档 | 完整验证 |
+| feishu_notify | live | `--send` 模式发送测试消息 | Webhook 连通性 |
 
 ## TODO
 
@@ -101,7 +104,7 @@ python3 test_e2e.py [--port PORT] --live   # + 全量测试（分钟级，发布
 - [ ] 心跳守护 Agent（Watchdog）：横向管理所有 Agent，定时健康检查 + 通知 + 授权后自动修复
 - [ ] 账号管理 + Agent 可见性控制（对外展示时实现）
 - [ ] Nginx 配置模板
-- [ ] **Libra 实验报告 Agent**：端到端实验报告产出（Libra 截图 → 飞书文档生成），含历史调试经验。lite 测试：对单实验截图 2 个指标组 + 生成文档
+- [x] ~~Libra 实验报告 Agent~~：已接入，指标爬取可用。截图 + 飞书文档生成待完善
 - [ ] 更多 Agent 接入（小红书文案、Poker、股票告警等）
 
 ## 规划中的功能
