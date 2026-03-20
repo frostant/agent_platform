@@ -87,6 +87,7 @@ class CrawlRequest(BaseModel):
     version: Optional[str] = None  # 实验版本名，如 "v1"
     start_date: Optional[str] = None
     end_date: Optional[str] = None
+    datacenter: Optional[str] = "ROW"  # 命名用，与截图目录对齐
 
 
 class ScreenshotRequest(BaseModel):
@@ -141,8 +142,8 @@ def crawl(req: CrawlRequest):
             target_version = info['exp_versions'][0][1]
             logger.info(f"未指定版本，使用第一个实验组: {target_version}")
 
-        # 输出目录（统一命名）
-        out_dir = _make_output_dir(req.flight_id, target_version, None, req.start_date, req.end_date)
+        # 输出目录（统一命名，datacenter 与截图对齐）
+        out_dir = _make_output_dir(req.flight_id, target_version, req.datacenter, req.start_date, req.end_date)
 
         # 复用已验证的 crawl 函数
         result = do_crawl(
