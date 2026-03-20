@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+venv/
+.venv/
+
+# Node
+node_modules/
+frontend/dist/
+
+# Secrets
+config/secrets.json
+config/state.json
+agents/*/.env
+agents/*/digest/cookies.json
+.env
+
+# Logs
+logs/
+
+# Data
+agents/*/data/
+
+# OS
+.DS_Store
+*.log

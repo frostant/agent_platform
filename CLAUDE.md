@@ -1,0 +1,119 @@
+# Agent 统一平台
+
+## 项目简介
+
+统一 Agent 管理平台，聚合多个独立 Agent 到一个 Web 入口。支持权限管理（guest/root）、Agent 沙箱隔离、开机自动恢复。
+
+## 架构
+
+```
+浏览器 → Nginx → ┬─ /        React 前端（Vite + TailwindCSS v4）
+                  ├─ /api/*   FastAPI 网关（:8000）
+                  └─ /agent/* Agent 子进程（各自端口，iframe 嵌入）
+```
+
+- 网关启动时扫描 `agents/*/agent.json` 自动发现 Agent
+- 每个 Agent 独立子进程 + 独立 venv + 独立端口
+- 状态检查：子进程 PID + 端口探活兜底
+
+## 技术栈
+
+后端 FastAPI (Python 3.9+) | 前端 React + Vite + TailwindCSS v4 | 图标 lucide-react
+
+## 当前 Agent
+
+| Agent | 端口 | 权限 | 说明 |
+|-------|------|------|------|
+| feishu_notify | 8501 | public | 飞书群消息推送（纯文本+富文本） |
+| daily_digest | 8502 | root_only | Libra 实验摘要（单实验+全量） |
+
+## 编码规范
+
+### Python 3.9 兼容
+- 不能用 `int | None`，必须用 `Optional[int]` 或 `from __future__ import annotations`
+
+### 前端 TypeScript
+- 类型导入必须用 `import type { X }` 而非 `import { X }`
+- 用 `npm run build` 检查错误，`tsc --noEmit` 不够可靠
+
+### Agent 沙箱自包含规范
+每个 Agent 的代码和依赖必须在自己目录内闭环（`scripts/check_isolation.sh` 自动检查）：
+1. 禁止 `sys.path.insert/append`
+2. 禁止硬编码绝对路径
+3. 所有 import 为标准库 / requirements.txt 声明的库 / 内部相对导入
+4. 必须有 `requirements.txt`
+5. 必须有 `test_e2e.py`
+
+**添加新 Agent：** 代码放 `agents/<id>/`，复用模块复制进来而非外部 import，跑 `check_isolation.sh` 验证。
+
+### 飞书 Webhook Bot
+- post 富文本不支持 `style` 字段，发送时必须过滤掉
+- 支持元素：`text`、`a`（链接）、`at`
+
+### Agent 前端修改后不生效
+- **现象**：修改了 `app.py` 中的 HTML/JS，浏览器强刷后仍是旧代码
+- **根因**：uvicorn 没有用 `--reload` 启动，修改 Python 文件后进程仍跑旧代码
+- **验证方法**：`curl -s http://localhost:<port>/ | grep <关键代码>` 确认服务端返回的是新代码
+- **解决**：必须 `kill -9` 旧进程再重启，不能只靠浏览器刷新
+
+### Libra confidence 字段含义
+- `confidence=1` 表示"统计显著"，**不代表正向**
+- `confidence=-1` 也表示"统计显著"，**不代表负向**
+- 正负方向必须看 `rel_diff` 的符号
+- 颜色规则：显著 + rel_diff≥0 → 绿色，显著 + rel_diff<0 → 红色，不显著 → 黑色
+
+### 日志
+- 网关日志：`logs/gateway.log`
+- Agent 日志：`agents/<id>/data/<id>.log`
+- launchd 日志：`logs/launchd_stdout.log`、`logs/launchd_stderr.log`
+
+## 自测
+
+改完代码必须跑 `./scripts/check_all.sh`，全部通过才算完成：
+1. 前端 Vite 构建
+2. 后端 API 测试（23 用例）
+3. Agent 配置校验
+4. Agent 沙箱隔离检查
+5. Agent 端到端测试（`--lite` 模式）
+
+### test_e2e.py 规范
+```
+python3 test_e2e.py [--port PORT]          # 默认：接口格式校验（秒级）
+python3 test_e2e.py [--port PORT] --lite   # + 标准样例（~10s，日常用）
+python3 test_e2e.py [--port PORT] --live   # + 全量测试（分钟级，发布前）
+```
+
+### 标准测试样例
+| Agent | 输入 |
+|-------|------|
+| daily_digest 单实验 | flight_id=71879109, start=2026-03-16, end=2026-03-19, region=ROW |
+| feishu_notify | `--send` 模式发送测试消息 |
+
+## TODO
+
+- [ ] Git 首次提交
+- [ ] Render 部署配置
+- [ ] 推特爬虫 + 工具 Agent
+- [ ] 心跳守护 Agent（Watchdog）：横向管理所有 Agent，定时健康检查 + 通知 + 授权后自动修复
+- [ ] 账号管理 + Agent 可见性控制（对外展示时实现）
+- [ ] Nginx 配置模板
+- [ ] **Libra 实验报告 Agent**：端到端实验报告产出（Libra 截图 → 飞书文档生成），含历史调试经验。lite 测试：对单实验截图 2 个指标组 + 生成文档
+- [ ] 更多 Agent 接入（小红书文案、Poker、股票告警等）
+
+## 规划中的功能
+
+### 心跳守护 Agent（Watchdog）
+- 每小时检查所有 Agent 的 /health + test_e2e.py
+- 异常 → 飞书通知 → 授权后 git stash → 修复 → 失败则回滚
+- 默认跨沙箱只读，修复需 root 明确授权
+- 开机自启（launchd/systemd）
+
+### 多 Agent 并行对比（Arena）
+- 同一 prompt 并行发给多个大模型 API，结果并排展示
+- 两种模式：Chatbot 文字对比 + 图片生成风格对比
+- 需要接入多个模型接口（Claude/GPT/Gemini/SD/MJ 等）
+- 附带 Token 用量 + 费用统计面板：每次调用记录各模型的 token 消耗和价格，可查看累计花费
+
+### 推特信息聚合 Agent
+- 基础：链接搜索、拉取用户帖子
+- 进阶：关注列表 → 自动抓取 → AI 筛选 → 推送

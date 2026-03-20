@@ -1,0 +1,12 @@
+{
+  "id": "feishu_notify",
+  "name": "飞书群消息推送",
+  "description": "向飞书群发送文本消息，支持 Webhook 签名验证",
+  "icon": "send",
+  "type": "fastapi",
+  "port": 8501,
+  "entry": "app",
+  "access": "public",
+  "autostart": true,
+  "tags": ["通知", "飞书", "工具"]
+}

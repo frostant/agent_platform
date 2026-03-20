@@ -1,0 +1,12 @@
+{
+  "id": "daily_digest",
+  "name": "每日实验摘要",
+  "description": "一键拉取所有运行中实验的关注指标，支持手动触发和单实验查询",
+  "icon": "bar-chart",
+  "type": "fastapi",
+  "port": 8502,
+  "entry": "app",
+  "access": "root_only",
+  "autostart": true,
+  "tags": ["实验", "数据", "Libra"]
+}
