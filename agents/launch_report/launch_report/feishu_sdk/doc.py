@@ -300,25 +300,45 @@ class FeishuDoc:
             index=0,
         )
 
-    def write_table_cell_image(self, cell_block_id: str, image_path: str) -> dict:
-        """向表格单元格插入图片（四步流程）
+    def _delete_cell_default_blocks(self, cell_block_id: str):
+        """删除表格 cell 内的默认空段落
 
-        飞书创建表格时，每个 cell 默认自带一个空文本段落。
-        插入图片后需要删掉这个空段落，否则会显示多余空行。
+        飞书创建表格时每个 cell 自带空文本段落，会显示为多余空行。
+        在往 cell 写入内容前调用此方法清理。
+        """
+        try:
+            cell_detail = self.get_block(cell_block_id)
+            children = cell_detail.get("data", {}).get("block", {}).get("children", [])
+            if children:
+                url = (
+                    f"{self.api_base}/docx/v1/documents/{self.document_id}"
+                    f"/blocks/{cell_block_id}/children/batch_delete"
+                    f"?document_revision_id=-1"
+                )
+                requests.delete(
+                    url,
+                    json={"start_index": 0, "end_index": len(children)},
+                    headers=self._headers(),
+                    timeout=10,
+                )
+        except Exception:
+            pass
+
+    def write_table_cell_image(self, cell_block_id: str, image_path: str) -> dict:
+        """向表格单元格插入图片
+
+        先清除 cell 默认空段落，再插入图片，避免多余空行。
 
         Args:
             cell_block_id: 单元格 block ID
             image_path: 本地图片路径
         """
-        # Step 0: 记录 cell 内现有的默认 block（稍后删除）
-        cell_detail = self.get_block(cell_block_id)
-        old_children = (
-            cell_detail.get("data", {}).get("block", {}).get("children", [])
-        )
+        # Step 0: 清除默认空段落
+        self._delete_cell_default_blocks(cell_block_id)
 
-        # Step 1: 在单元格内创建空图片 block（index=0 插到最前）
+        # Step 1: 创建空图片 block
         result = self.append_blocks(
-            cell_block_id, [{"block_type": 27, "image": {}}], index=0
+            cell_block_id, [{"block_type": 27, "image": {}}]
         )
         if result.get("code") != 0:
             print(f"[feishu_sdk] 表格单元格插图失败: {result.get('msg', result)}")
@@ -336,27 +356,7 @@ class FeishuDoc:
         )
 
         # Step 3: 关联图片
-        replace_result = self.replace_image(image_block_id, file_token)
-
-        # Step 4: 删除 cell 内原有的默认空段落（消除多余空行）
-        if old_children:
-            try:
-                url = (
-                    f"{self.api_base}/docx/v1/documents/{self.document_id}"
-                    f"/blocks/{cell_block_id}/children/batch_delete"
-                    f"?document_revision_id=-1"
-                )
-                # 图片在 index=0，默认段落被推到 index=1 开始
-                requests.delete(
-                    url,
-                    json={"start_index": 1, "end_index": 1 + len(old_children)},
-                    headers=self._headers(),
-                    timeout=10,
-                )
-            except Exception:
-                pass  # 删除失败不影响主流程
-
-        return replace_result
+        return self.replace_image(image_block_id, file_token)
 
     # ── 图片 ──────────────────────────────────────────────
 

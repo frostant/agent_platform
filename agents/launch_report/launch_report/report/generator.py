@@ -484,6 +484,8 @@ class ReportGenerator:
         try:
             table_block_id, cells = doc.create_empty_table(1, 1)
             cell_id = cells[0]
+            # 清除 cell 默认空段落（和 write_table_cell_image 同理）
+            doc._delete_cell_default_blocks(cell_id)
         except Exception as e:
             print(f"    ⚠ 创建容器表格失败，回退垂直: {e}")
             self._layout_vertical(doc, group)
