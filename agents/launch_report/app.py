@@ -107,6 +107,7 @@ class GenerateRequest(BaseModel):
     end_date: Optional[str] = None
     datacenter: Optional[str] = "ROW"
     doc_id: Optional[str] = None  # 已有飞书文档 ID，None=新建
+    screenshots_dir: Optional[str] = None  # 已有截图目录名（跳过截图步骤）
     test_mode: bool = True  # 文档首行加时间戳
 
 
@@ -279,29 +280,44 @@ def screenshot(req: ScreenshotRequest):
 
 @app.post("/generate")
 def generate(req: GenerateRequest):
-    """完整端到端流程: 截图 → 爬取 → 生成飞书文档"""
-    logger.info(f"生成报告: flight_id={req.flight_id}, version={req.version}, doc_id={req.doc_id}")
+    """生成飞书文档
+
+    如果 screenshots_dir 已指定且含截图+数据 → 直接生成（秒级）
+    否则走完整流程：截图 → 爬取 → 生成
+    """
+    logger.info(f"生成报告: flight_id={req.flight_id}, version={req.version}, "
+                f"doc_id={req.doc_id}, screenshots_dir={req.screenshots_dir}")
 
     if not COOKIES_PATH.exists():
         raise HTTPException(500, "cookies.json 不存在")
 
     try:
-        vi = _resolve_version_info(req.flight_id, req.version)
-        target_vname = vi['target_vname']
-        start_date = req.start_date or vi['start_date']
-        end_date = req.end_date or vi['end_date']
+        # 确定输出目录：优先用指定的 screenshots_dir
+        if req.screenshots_dir:
+            out_dir = str(OUTPUT_DIR / req.screenshots_dir)
+            out_path = Path(out_dir)
+            if not out_path.exists():
+                raise HTTPException(400, f"目录不存在: {req.screenshots_dir}")
+            logger.info(f"使用已有目录: {out_dir}")
+        else:
+            vi = _resolve_version_info(req.flight_id, req.version)
+            target_vname = vi['target_vname']
+            start_date = req.start_date or vi['start_date']
+            end_date = req.end_date or vi['end_date']
+            out_dir = _make_output_dir(req.flight_id, target_vname, req.datacenter, start_date, end_date)
+            out_path = Path(out_dir)
 
-        out_dir = _make_output_dir(req.flight_id, target_vname, req.datacenter, start_date, end_date)
-        out_path = Path(out_dir)
-
-        # 检查缓存：已有截图和数据则跳过
         existing_screenshots = list(out_path.glob('*.png'))
         has_metrics = (out_path / 'metrics_data.json').exists()
 
-        # Step 1: 截图（有截图则跳过）
+        # Step 1: 截图（有则跳过）
         if existing_screenshots:
             logger.info(f"Step 1: 跳过截图（已有 {len(existing_screenshots)} 张）")
         else:
+            if not hasattr(req, '_vi'):
+                vi = _resolve_version_info(req.flight_id, req.version)
+                start_date = req.start_date or vi['start_date']
+                end_date = req.end_date or vi['end_date']
             logger.info("Step 1: 截图...")
             config = load_metrics3_config()
             groups = get_launch_report_groups(config)
@@ -309,7 +325,6 @@ def generate(req: GenerateRequest):
                 for g in groups:
                     if g['group_id'] == mg['group_id']:
                         g['age_dimension'] = mg.get('age_dimension', 'predicted_age_group')
-
             asyncio.run(capture_screenshots_parallel(
                 flight_id=req.flight_id,
                 groups=groups,
@@ -322,10 +337,15 @@ def generate(req: GenerateRequest):
                 target_vid=vi['target_vid'],
             ))
 
-        # Step 2: 爬取数据（有 metrics_data.json 则跳过）
+        # Step 2: 爬取（有则跳过）
         if has_metrics:
             logger.info("Step 2: 跳过爬取（已有 metrics_data.json）")
         else:
+            if 'vi' not in locals():
+                vi = _resolve_version_info(req.flight_id, req.version)
+            target_vname = vi['target_vname'] if 'vi' in locals() else req.version
+            start_date = req.start_date or vi.get('start_date', '')
+            end_date = req.end_date or vi.get('end_date', '')
             logger.info("Step 2: 爬取指标...")
             do_crawl(
                 flight_id=req.flight_id,
@@ -337,7 +357,16 @@ def generate(req: GenerateRequest):
             )
 
         # Step 3: 生成飞书文档
-        logger.info("Step 3: 生成飞书文档...")
+        # 从 metrics_data.json 读取 version 信息
+        metrics_path = out_path / 'metrics_data.json'
+        if metrics_path.exists():
+            import json as _json
+            mdata = _json.loads(metrics_path.read_text())
+            target_vname = mdata.get('target_vname', req.version or 'default')
+        else:
+            target_vname = req.version or 'default'
+
+        logger.info(f"Step 3: 生成飞书文档 (version={target_vname})...")
         gen = ReportGenerator(
             flight_id=req.flight_id,
             target_version=target_vname,
@@ -349,7 +378,8 @@ def generate(req: GenerateRequest):
         doc.auth()
 
         if not req.doc_id:
-            title = f"[Launch Notice] {vi['exp_name']} - {target_vname}"
+            exp_name = gen.experiment_data.get("experiment_name") or f"Flight {req.flight_id}"
+            title = f"[Launch Notice] {exp_name} - {target_vname}"
             doc.create_document(title)
 
         gen.render(doc, test_mode=req.test_mode)
@@ -359,7 +389,7 @@ def generate(req: GenerateRequest):
         except Exception as e:
             logger.warning(f"设置文档权限失败: {e}")
 
-        doc_url = f"https://bytedance.larkoffice.com/docx/{doc.document_id}" if doc.document_id else None
+        doc_url = f"https://bytedance.sg.larkoffice.com/docx/{doc.document_id}" if doc.document_id else None
         logger.info(f"报告生成完成: {doc_url}")
 
         return {
@@ -475,6 +505,17 @@ pre{background:#f5f6f8;padding:12px;border-radius:6px;font-size:12px;line-height
       <option value="EU">EU</option>
       <option value="">全部</option>
     </select>
+  </div>
+  <div class="row">
+    <label>飞书文档</label>
+    <input type="text" id="doc-id" placeholder="文档 ID（可选，不填则新建）" value="LHQxdiSJAo7zJXxjw2pl28yqgsf" style="width:280px">
+  </div>
+  <div class="row">
+    <label>已有数据</label>
+    <select id="screenshots-dir" style="padding:6px 10px;border:1px solid #e5e6eb;border-radius:6px;font-size:13px">
+      <option value="">无（重新截图+爬取）</option>
+    </select>
+    <span style="font-size:12px;color:#bbbfc4">选已有目录可跳过截图</span>
   </div>
   <div class="row" style="margin-top:12px;gap:8px">
     <button class="btn" style="background:#e8f0fe;color:#1a56db" onclick="runScreenshot()">1. 截图</button>
@@ -597,6 +638,10 @@ async function runGenerate() {
   const body = getParams();
   if (!body.flight_id) { showStatus('请输入 Flight ID', 'error'); return; }
   body.test_mode = true;
+  const docId = document.getElementById('doc-id').value;
+  if (docId) body.doc_id = docId;
+  const ssDir = document.getElementById('screenshots-dir').value;
+  if (ssDir) body.screenshots_dir = ssDir;
   showStatus('正在生成报告（截图→爬取→飞书文档），可能需要数分钟...', 'info');
 
   const dirName2 = [body.flight_id, body.version||'default', body.datacenter||'ALL', body.start_date||'', body.end_date||''].filter(Boolean).join('_');
@@ -663,11 +708,25 @@ async function loadOutputs() {
   try {
     const res = await fetch(API + '/outputs');
     const data = await res.json();
+
+    // 历史列表
     const el = document.getElementById('outputs');
     if (!data.length) { el.innerHTML = '<div style="color:#bbbfc4;text-align:center;padding:12px">暂无输出</div>'; return; }
     el.innerHTML = data.map(o =>
       '<div class="output-item"><span>' + o.name + '</span><span style="color:#bbbfc4">' + o.screenshots + ' 截图, ' + (o.has_metrics ? '有数据' : '无数据') + '</span></div>'
     ).join('');
+
+    // 填充下拉框（只显示有截图+数据的目录）
+    const sel = document.getElementById('screenshots-dir');
+    const current = sel.value;
+    sel.innerHTML = '<option value="">无（重新截图+爬取）</option>';
+    data.filter(o => o.screenshots > 0 && o.has_metrics).forEach(o => {
+      const opt = document.createElement('option');
+      opt.value = o.name;
+      opt.textContent = o.name + ' (' + o.screenshots + '张)';
+      sel.appendChild(opt);
+    });
+    if (current) sel.value = current;
   } catch(e) { console.error(e); }
 }
 
