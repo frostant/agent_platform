@@ -642,16 +642,26 @@ async function runGenerate() {
   if (docId) body.doc_id = docId;
   const ssDir = document.getElementById('screenshots-dir').value;
   if (ssDir) body.screenshots_dir = ssDir;
-  showStatus('正在生成报告（截图→爬取→飞书文档），可能需要数分钟...', 'info');
 
-  const dirName2 = [body.flight_id, body.version||'default', body.datacenter||'ALL', body.start_date||'', body.end_date||''].filter(Boolean).join('_');
-  document.getElementById('results').innerHTML =
-    '<div class="card"><div class="card-title">生成进度</div>' +
-    '<div style="background:#f0f1f5;border-radius:6px;height:24px;overflow:hidden;margin-bottom:8px">' +
-    '<div id="gen-bar" style="background:#4e83fd;height:100%;width:0%;transition:width 0.5s;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:12px;color:#fff;min-width:40px"></div></div>' +
-    '<div id="gen-text" style="font-size:13px;color:#646a73;text-align:center">准备中...</div></div>';
+  const hasCache = !!ssDir;
+  if (hasCache) {
+    showStatus('使用已有数据，正在上传截图到飞书文档...', 'info');
+    document.getElementById('results').innerHTML =
+      '<div class="card"><div class="card-title">生成进度</div>' +
+      '<div id="gen-text" style="font-size:13px;color:#646a73;text-align:center">' +
+      '<div class="spinner" style="margin:0 auto 8px"></div>' +
+      '跳过截图和爬取（使用缓存）<br>正在上传 21 张截图到飞书，约需 2-3 分钟...</div></div>';
+  } else {
+    showStatus('正在生成报告（截图→爬取→飞书文档），可能需要数分钟...', 'info');
+    const dirName2 = [body.flight_id, body.version||'default', body.datacenter||'ALL', body.start_date||'', body.end_date||''].filter(Boolean).join('_');
+    document.getElementById('results').innerHTML =
+      '<div class="card"><div class="card-title">生成进度</div>' +
+      '<div style="background:#f0f1f5;border-radius:6px;height:24px;overflow:hidden;margin-bottom:8px">' +
+      '<div id="gen-bar" style="background:#4e83fd;height:100%;width:0%;transition:width 0.5s;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:12px;color:#fff;min-width:40px"></div></div>' +
+      '<div id="gen-text" style="font-size:13px;color:#646a73;text-align:center">准备中...</div></div>';
+  }
 
-  let genPoll = setInterval(async () => {
+  let genPoll = hasCache ? null : setInterval(async () => {
     try {
       const r = await fetch(API + '/progress?dir_name=' + encodeURIComponent(dirName2));
       const p = await r.json();
@@ -663,7 +673,7 @@ async function runGenerate() {
   }, 3000);
   try {
     const res = await fetch(API + '/generate', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
-    clearInterval(genPoll);
+    if (genPoll) clearInterval(genPoll);
     if (!res.ok) { const e = await res.json(); throw new Error(e.detail||'失败'); }
     const data = await res.json();
     let html = '<div class="card"><div class="card-title">报告生成完成</div>';
@@ -673,7 +683,7 @@ async function runGenerate() {
     document.getElementById('results').innerHTML = html;
     loadOutputs();
   } catch(e) {
-    clearInterval(genPoll);
+    if (genPoll) clearInterval(genPoll);
     showStatus('报告生成失败: ' + e.message, 'error');
     document.getElementById('results').innerHTML = '';
   }
