@@ -1,0 +1,5 @@
+# 网关 + 所有 Agent 的依赖合集（Render 部署用）
+fastapi>=0.110.0
+uvicorn>=0.29.0
+requests>=2.31.0
+python-dotenv>=1.0.0

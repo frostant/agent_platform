@@ -91,7 +91,7 @@ python3 test_e2e.py [--port PORT] --live   # + 全量测试（分钟级，发布
 
 ## TODO
 
-- [ ] Git 首次提交
+- [x] ~~Git 首次提交~~
 - [ ] Render 部署配置
 - [ ] 推特爬虫 + 工具 Agent
 - [ ] 心跳守护 Agent（Watchdog）：横向管理所有 Agent，定时健康检查 + 通知 + 授权后自动修复
@@ -113,6 +113,20 @@ python3 test_e2e.py [--port PORT] --live   # + 全量测试（分钟级，发布
 - 两种模式：Chatbot 文字对比 + 图片生成风格对比
 - 需要接入多个模型接口（Claude/GPT/Gemini/SD/MJ 等）
 - 附带 Token 用量 + 费用统计面板：每次调用记录各模型的 token 消耗和价格，可查看累计花费
+
+### 部署迁移注意事项
+当前用 Render 免费层做 Demo，后续可能迁移到 VPS / Railway / Fly.io。以下部分与部署平台耦合，迁移时需要调整：
+
+| 耦合点 | 当前方案 | 迁移时调整 |
+|--------|---------|-----------|
+| 进程启动方式 | Render 的 `render.yaml` + `start` 命令 | 改为 Docker Compose 或 systemd |
+| 环境变量 | Render Dashboard 配置 | 改为 `.env` 文件或云平台的 secret manager |
+| HTTPS / 域名 | Render 自动分配 `xxx.onrender.com` | 自行配置 Nginx + Let's Encrypt |
+| 端口暴露 | Render 只暴露一个端口，需单进程模式 | VPS 可直接多端口，Nginx 反向代理 |
+| 冷启动 | 免费层 15 分钟无请求后休眠 | VPS 常驻运行，无此问题 |
+| 静态文件 | 前端 build 后由 FastAPI 托管 | 可分离到 Vercel/CDN |
+
+**设计原则**：部署逻辑集中在 `render.yaml` + `scripts/` 中，业务代码不含平台特定逻辑，确保一键切换。
 
 ### 推特信息聚合 Agent
 - 基础：链接搜索、拉取用户帖子

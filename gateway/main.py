@@ -2,10 +2,13 @@
 
 import time
 import logging
+import urllib.request
+import urllib.error
 from pathlib import Path
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, Depends, HTTPException, Request
+from fastapi import FastAPI, Depends, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
 from . import agent_registry, agent_manager
 from .auth import get_role, require_root, verify_password, create_token
@@ -28,6 +31,9 @@ logging.basicConfig(
 )
 logger = logging.getLogger("gateway")
 
+PROJECT_DIR = Path(__file__).parent.parent
+FRONTEND_DIST = PROJECT_DIR / "frontend" / "dist"
+
 
 # ---------------------------------------------------------------------------
 # 生命周期
@@ -38,14 +44,12 @@ async def lifespan(app: FastAPI):
     logger.info("=" * 50)
     logger.info("网关启动")
 
-    # 加载注册表
     agent_registry.load()
     agents = agent_registry.get_all()
     logger.info(f"Agent 扫描完成: 发现 {len(agents)} 个 Agent")
     for a in agents:
         logger.info(f"  - {a.id} (type={a.type}, port={a.port}, autostart={a.autostart})")
 
-    # 自动启动
     agent_manager.auto_start()
     status = agent_manager.status_all()
     for aid, st in status.items():
@@ -54,7 +58,6 @@ async def lifespan(app: FastAPI):
     logger.info("网关就绪，等待请求")
     yield
 
-    # 关闭
     logger.info("网关关闭中，停止所有 Agent...")
     agent_manager.stop_all()
     logger.info("网关已关闭")
@@ -77,7 +80,6 @@ async def log_requests(request: Request, call_next):
     start = time.time()
     response = await call_next(request)
     duration = round((time.time() - start) * 1000)
-    # 健康检查和 Agent 列表轮询太频繁，降级为 DEBUG
     path = request.url.path
     if path in ("/api/health", "/api/agents"):
         logger.debug(f"{request.method} {path} → {response.status_code} ({duration}ms)")
@@ -189,3 +191,64 @@ def reload_agents(_=Depends(require_root)):
 @app.get("/api/health")
 def health():
     return {"status": "ok", "agents": agent_manager.status_all()}
+
+
+# ---------------------------------------------------------------------------
+# Agent 反向代理：/agent/<id>/{path} → localhost:{port}/{path}
+# 让所有服务通过单端口暴露（Render 部署需要）
+# ---------------------------------------------------------------------------
+
+@app.api_route("/agent/{agent_id}/{path:path}", methods=["GET", "POST", "PUT", "DELETE"])
+async def proxy_agent(agent_id: str, path: str, request: Request):
+    config = agent_registry.get(agent_id)
+    if not config or not config.port:
+        raise HTTPException(404, "Agent 不存在")
+
+    target_url = f"http://localhost:{config.port}/{path}"
+    if request.url.query:
+        target_url += f"?{request.url.query}"
+
+    body = await request.body() if request.method in ("POST", "PUT") else None
+
+    try:
+        req = urllib.request.Request(
+            target_url,
+            data=body,
+            method=request.method,
+        )
+        # 转发 headers
+        for key in ("content-type", "authorization", "accept"):
+            val = request.headers.get(key)
+            if val:
+                req.add_header(key, val)
+
+        with urllib.request.urlopen(req, timeout=300) as resp:
+            resp_body = resp.read()
+            resp_headers = dict(resp.getheaders())
+            content_type = resp_headers.get("Content-Type", "application/octet-stream")
+            return Response(
+                content=resp_body,
+                status_code=resp.status,
+                media_type=content_type,
+            )
+    except urllib.error.HTTPError as e:
+        return Response(content=e.read(), status_code=e.code)
+    except Exception as e:
+        logger.error(f"代理 {agent_id}/{path} 失败: {e}")
+        raise HTTPException(502, f"Agent 不可达: {e}")
+
+
+# ---------------------------------------------------------------------------
+# 前端静态文件（生产模式：serve frontend/dist）
+# ---------------------------------------------------------------------------
+
+if FRONTEND_DIST.exists():
+    # SPA fallback：非 API/agent 路径都返回 index.html
+    from fastapi.responses import FileResponse
+
+    @app.get("/{path:path}")
+    async def serve_frontend(path: str):
+        file_path = FRONTEND_DIST / path
+        if file_path.is_file():
+            return FileResponse(file_path)
+        return FileResponse(FRONTEND_DIST / "index.html")

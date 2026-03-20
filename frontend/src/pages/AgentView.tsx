@@ -29,7 +29,11 @@ export default function AgentView({ agent, role, onRefresh }: Props) {
     }
   }
 
-  const agentUrl = agent.port ? `http://localhost:${agent.port}` : null
+  // 生产模式通过网关反代 /agent/<id>/，开发模式直连 localhost:port
+  const isDev = window.location.port === '5173'
+  const agentUrl = agent.port
+    ? (isDev ? `http://localhost:${agent.port}` : `/agent/${agent.id}/`)
+    : null
 
   return (
     <div className="flex flex-col h-screen">
