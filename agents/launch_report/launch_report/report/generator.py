@@ -484,8 +484,11 @@ class ReportGenerator:
         try:
             table_block_id, cells = doc.create_empty_table(1, 1)
             cell_id = cells[0]
-            # 清除 cell 默认空段落（和 write_table_cell_image 同理）
-            doc._delete_cell_default_blocks(cell_id)
+            # 记录默认 block 数量（稍后删除）
+            _cell_detail = doc.get_block(cell_id)
+            _default_count = len(
+                _cell_detail.get("data", {}).get("block", {}).get("children", [])
+            )
         except Exception as e:
             print(f"    ⚠ 创建容器表格失败，回退垂直: {e}")
             self._layout_vertical(doc, group)
@@ -524,6 +527,24 @@ class ReportGenerator:
                 self._insert_grid_in_block(doc, cell_id, sec_bds)
             elif sec_bds:
                 self._insert_image_in_block(doc, cell_id, sec_bds[0])
+
+        # 删除 cell 开头的默认空段落（内容都追加在后面，默认段落在 index 0~_default_count-1）
+        if _default_count > 0:
+            try:
+                del_url = (
+                    f"{doc.api_base}/docx/v1/documents/{doc.document_id}"
+                    f"/blocks/{cell_id}/children/batch_delete"
+                    f"?document_revision_id=-1"
+                )
+                import requests as _req
+                _req.delete(
+                    del_url,
+                    json={"start_index": 0, "end_index": _default_count},
+                    headers=doc._headers(),
+                    timeout=10,
+                )
+            except Exception:
+                pass
 
     def _layout_vertical(self, doc, group):
         """vertical: 所有截图垂直堆叠"""
