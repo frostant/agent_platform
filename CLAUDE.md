@@ -27,6 +27,10 @@
 | feishu_notify | 8501 | public | 飞书群消息推送（纯文本+富文本） |
 | daily_digest | 8502 | root_only | Libra 实验摘要（单实验+全量） |
 
+## 交互注意
+
+- 用户使用语音输入，英文/中文可能有误识别（如 "Render"→"染的"、"Claude"→"Cloud"），根据上下文理解即可
+
 ## 编码规范
 
 ### Python 3.9 兼容

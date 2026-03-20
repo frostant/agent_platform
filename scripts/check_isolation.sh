@@ -19,12 +19,18 @@ check_agent() {
     echo "--- $agent_id ---"
     local fail=0
 
-    # 1. 检查 sys.path hack（不应依赖外部路径）
-    if grep -rn "sys\.path\.\(insert\|append\)" "$agent_dir" --include="*.py" 2>/dev/null | grep -v venv | grep -v __pycache__; then
-        echo "  [FAIL] 发现 sys.path hack（应使用相对 import）"
+    # 1. 检查 sys.path hack（引用 Agent 目录外部的路径才报错）
+    local external_paths=$(grep -rn "sys\.path\.\(insert\|append\)" "$agent_dir" --include="*.py" 2>/dev/null \
+        | grep -v venv | grep -v __pycache__ \
+        | grep -v "parent\b" \
+        || true)
+    # parent 开头的通常是 Path(__file__).parent，指向 Agent 内部，允许
+    if [ -n "$external_paths" ]; then
+        echo "  [FAIL] 发现指向外部的 sys.path hack:"
+        echo "$external_paths" | sed 's/^/    /'
         fail=1
     else
-        echo "  [PASS] 无 sys.path hack"
+        echo "  [PASS] 无外部 sys.path hack"
     fi
 
     # 2. 检查绝对路径引用

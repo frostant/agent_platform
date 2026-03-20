@@ -1,0 +1,255 @@
+{
+  "_comment": "指标组配置 — launch_report 和 daily_digest 共享",
+
+  "core_groups_order": [
+    "Core-Active Days",
+    "Active Hours (HLT)",
+    "Core-Key Metrics",
+    "Core-Interaction"
+  ],
+
+  "category_keywords": {
+    "core": ["APP必看", "Must-check"],
+    "business": ["业务必看", "Business"],
+    "guardrail": ["护栏", "guardrail"],
+    "_comment": "不匹配以上任何的归入 target"
+  },
+
+  "_sidebar_comment": "sidebar_name 是 Libra 页面左侧栏中的实际显示名（用于截图定位），group_name 是我们自己的简称",
+
+  "_screenshots_comment": "screenshots 数组定义每个指标组的截图序列。range: 列范围(用于滚动定位)。type: chart | age_breakdown | table(普通截图)。display_mode: cumulative(默认) | average。chart 专属: metric_name + trend_type(daily|cumulative，优先 daily)。age_dimension: 组级字段，age_breakdown 使用的维度名。",
+
+  "_layout_comment": "layout 控制报告中截图的排列方式。table_pair: 每对截图用 1×2 表格并排。primary_grid: 主指标对全宽 + 次要指标对用 Grid 并排（需配合 primary_pair 指定主指标对索引）。vertical: 垂直堆叠。不指定时默认 vertical。",
+
+  "_metric_display_mode_comment": "metrics 数组中单个指标可设 display_mode: average，爬虫会额外调 merge_type=average 的 API 获取该指标数据。不设时默认 cumulative（merge_type=total）。",
+
+  "metric_groups": [
+    {
+      "group_id": 7018243,
+      "group_name": "Repost Core Metrics",
+      "sidebar_name": "[social]repost core metrics - new",
+      "section": "target",
+      "layout": "primary_grid",
+      "primary_pair": 0,
+      "digest": true,
+      "age_dimension": "predicted_age_group_classifier_global_report",
+      "metrics": [
+        {"id": 570891, "name": "RepostVV/User",         "short": "RepostVV",    "digest_rule": "always"},
+        {"id": 815925, "name": "RepostDays/Days",        "short": "RepostDays",  "digest_rule": "always"},
+        {"id": 570889, "name": "RecommendCnt/User",      "short": null,          "digest_rule": null},
+        {"id": 982062, "name": "AddRepostTextCnt/User",   "short": "AddTextCnt",  "digest_rule": "optional"},
+        {"id": 982063, "name": "AddRepostTextDays/User",  "short": "AddTextDays", "digest_rule": "optional", "display_mode": "average"}
+      ],
+      "screenshots": [
+        {
+          "type": "chart",
+          "range": {"start_col": "User", "end_col": "FollowRepostVV/RepostVV"},
+          "display_mode": "cumulative",
+          "metric_name": "RepostDays/Days",
+          "trend_type": "daily"
+        },
+        {
+          "type": "age_breakdown",
+          "range": {"start_col": "User", "end_col": "FollowRepostVV/RepostVV"},
+          "display_mode": "cumulative"
+        },
+        {
+          "type": "chart",
+          "range": {"start_col": "Recommendation vv/User", "end_col": "AddRecommendationUser/User"},
+          "display_mode": "cumulative",
+          "metric_name": "AddRecommendationCnt/User",
+          "trend_type": "daily"
+        },
+        {
+          "type": "age_breakdown",
+          "range": {"start_col": "Recommendation vv/User", "end_col": "AddRecommendationUser/User"},
+          "display_mode": "cumulative"
+        },
+        {
+          "type": "chart",
+          "range": {"start_col": "Recommendation vv/User", "end_col": "AddRecommendationUser/User"},
+          "display_mode": "average",
+          "metric_name": "AddRecommendationUser/User",
+          "trend_type": "daily"
+        },
+        {
+          "type": "age_breakdown",
+          "range": {"start_col": "Recommendation vv/User", "end_col": "AddRecommendationUser/User"},
+          "display_mode": "average"
+        }
+      ]
+    },
+    {
+      "group_id": 7028489,
+      "group_name": "Repost Interaction",
+      "sidebar_name": "Repost interaction（with all user）",
+      "section": "target",
+      "layout": "table_pair",
+      "digest": true,
+      "age_dimension": "predicted_age_group_classifier_latest_prev_1d",
+      "metrics": [
+        {"id": 712231, "name": "repost_interaction_cnt/U",      "short": "interaction", "digest_rule": "always"},
+        {"id": 942712, "name": "muf_repost_interaction_pair/U",  "short": null,          "digest_rule": null}
+      ],
+      "screenshots": [
+        {
+          "type": "table",
+          "range": {"start_col": "User", "end_col": "like_repost_video_cnt/U"},
+          "display_mode": "cumulative"
+        },
+        {
+          "type": "age_breakdown",
+          "range": {"start_col": "User", "end_col": "like_repost_video_cnt/U"},
+          "display_mode": "cumulative"
+        },
+        {
+          "type": "table",
+          "range": {"start_col": "muf_repost_interaction_pair/U", "end_col": "repost_share_user/u"},
+          "display_mode": "cumulative"
+        },
+        {
+          "type": "age_breakdown",
+          "range": {"start_col": "muf_repost_interaction_pair/U", "end_col": "repost_share_user/u"},
+          "display_mode": "cumulative"
+        }
+      ]
+    },
+    {
+      "group_id": 7015828,
+      "group_name": "Core-Active Days",
+      "sidebar_name": "Core-Active Days",
+      "section": "impacts",
+      "layout": "table_pair",
+      "digest": true,
+      "age_dimension": "predicted_age_group_v2_1d",
+      "metrics": [
+        {"id": 536160, "name": "Last 7-day Active Days", "short": null, "digest_rule": null}
+      ],
+      "screenshots": [
+        {
+          "type": "chart",
+          "display_mode": "cumulative",
+          "metric_name": "Last 7-day Active Days",
+          "trend_type": "cumulative"
+        },
+        {
+          "type": "age_breakdown",
+          "display_mode": "cumulative"
+        }
+      ]
+    },
+    {
+      "group_id": 7033410,
+      "group_name": "Active Hours",
+      "sidebar_name": "Active Hours (HLT)",
+      "section": "impacts",
+      "layout": "table_pair",
+      "digest": true,
+      "age_dimension": "predicted_age_group_v2_1d",
+      "metrics": [
+        {"id": 780601, "name": "HLT7-active hours/U", "short": "HLT7", "digest_rule": "optional"}
+      ],
+      "screenshots": [
+        {
+          "type": "chart",
+          "display_mode": "cumulative",
+          "metric_name": "HLT7-last 7-day active hours/U",
+          "trend_type": "cumulative"
+        },
+        {
+          "type": "age_breakdown",
+          "display_mode": "cumulative"
+        }
+      ]
+    },
+    {
+      "group_id": 7015764,
+      "group_name": "Core-Key Metrics",
+      "sidebar_name": "Core-Key Metrics",
+      "section": "impacts",
+      "layout": "table_pair",
+      "digest": true,
+      "age_dimension": "predicted_age_group_v2_1d",
+      "metrics": [
+        {"id": 535015, "name": "StayDuration/U", "short": "StayDuration", "digest_rule": "optional"}
+      ],
+      "screenshots": [
+        {
+          "type": "chart",
+          "display_mode": "cumulative",
+          "metric_name": "StayDuration/U",
+          "trend_type": "daily"
+        },
+        {
+          "type": "age_breakdown",
+          "display_mode": "cumulative"
+        }
+      ]
+    },
+    {
+      "group_id": 7019062,
+      "group_name": "DM",
+      "sidebar_name": "Key Project-DM",
+      "section": "target",
+      "layout": "table_pair",
+      "digest": true,
+      "age_dimension": "predicted_age_group_classifier_latest_prev_1d_layer",
+      "metrics": [
+        {"id": 832057, "name": "MUF Msg Pair/User", "short": "DM Pair", "digest_rule": "optional"},
+        {"id": 582677, "name": "Msg Days/Days",      "short": "DM Days", "digest_rule": "optional"}
+      ],
+      "screenshots": [
+        {
+          "type": "table",
+          "display_mode": "cumulative"
+        },
+        {
+          "type": "age_breakdown",
+          "display_mode": "cumulative"
+        }
+      ]
+    },
+    {
+      "group_id": 7055577,
+      "group_name": "VT Multi Queue",
+      "sidebar_name": "Key Project - VT Multi Queue & MixRank Load",
+      "section": "target",
+      "digest": true,
+      "metrics": [
+        {"id": 1071141, "name": "social queue load", "short": "social load", "digest_rule": "always"}
+      ],
+      "screenshots": [
+        {
+          "type": "table",
+          "range": {"start_col": "User", "end_col": "social queue load"},
+          "display_mode": "cumulative"
+        }
+      ]
+    },
+    {
+      "group_id": 7019899,
+      "group_name": "Social Interaction",
+      "sidebar_name": "Key Project-Social Interaction",
+      "section": "target",
+      "layout": "table_pair",
+      "digest": true,
+      "age_dimension": "predicted_age_group_classifier_6c_v2_prev_1d",
+      "metrics": [
+        {"id": 799405, "name": "Core interaction pair / Dau", "short": "Core pair/Dau", "digest_rule": "always"},
+        {"id": 851405, "name": "Repost interaction pv / Dau", "short": "Repost pv/Dau", "digest_rule": "always"}
+      ],
+      "screenshots": [
+        {
+          "type": "table",
+          "range": {"start_col": "User", "end_col": "Social interaction pv / Dau"},
+          "display_mode": "cumulative"
+        },
+        {
+          "type": "age_breakdown",
+          "range": {"start_col": "User", "end_col": "Social interaction pv / Dau"},
+          "display_mode": "cumulative"
+        }
+      ]
+    }
+  ]
+}

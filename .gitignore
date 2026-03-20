@@ -14,6 +14,8 @@ config/secrets.json
 config/state.json
 agents/*/.env
 agents/*/digest/cookies.json
+agents/*/launch_report/cookies.json
+agents/*/launch_report/.env
 .env
 
 # Logs

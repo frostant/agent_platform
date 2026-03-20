@@ -1,0 +1,12 @@
+{
+  "id": "launch_report",
+  "name": "实验报告生成",
+  "description": "端到端实验报告：Libra 截图 + 指标爬取 + 飞书文档生成",
+  "icon": "flask",
+  "type": "fastapi",
+  "port": 8503,
+  "entry": "app",
+  "access": "root_only",
+  "autostart": true,
+  "tags": ["实验", "报告", "Libra", "飞书"]
+}

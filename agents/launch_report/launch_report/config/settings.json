@@ -1,0 +1,12 @@
+{
+  "_comment": "运行参数 — 非指标相关的可调配置",
+
+  "daily_digest": {
+    "max_experiment_age_days": 14,
+    "retry_waits": [15, 30, 60]
+  },
+
+  "launch_report": {
+    "libra_report_url": "https://libra-sg.tiktok-row.net/libra/flight/{flight_id}/report/main"
+  }
+}
