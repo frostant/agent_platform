@@ -18,6 +18,7 @@ API:
 import logging
 import time
 import threading
+from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
@@ -88,11 +89,24 @@ def _start_scheduler():
     for job in scheduler.get_jobs():
         logger.info(f"  - {job.name}: {job.trigger}")
 
-    # 启动后延迟 30 秒执行一次 lite 检查（开机首检）
+    # 启动后延迟 30 秒，检查今天是否有定时记录，没有就补一次
     def boot_check():
         time.sleep(30)
-        logger.info("开机首检(lite)...")
-        run_check("lite", trigger="boot")
+        today = datetime.now().strftime("%Y-%m-%d")
+        logs = get_health_logs(50)
+        has_scheduled_today = any(
+            l.get("trigger") == "scheduled" and l.get("timestamp", "").startswith(today)
+            for l in logs
+        )
+        if has_scheduled_today:
+            logger.info(f"今天({today})已有定时检查记录，跳过开机补检")
+            return
+
+        # 工作日补 full，周末补 lite
+        weekday = datetime.now().weekday()  # 0=Mon, 6=Sun
+        mode = "live" if weekday < 5 else "lite"
+        logger.info(f"今天({today})无定时检查记录，补检({mode})...")
+        run_check(mode, trigger="scheduled")  # 标记为 scheduled，计入统计
 
     threading.Thread(target=boot_check, daemon=True).start()
 
